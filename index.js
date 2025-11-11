@@ -40,7 +40,7 @@ app.get('/api/debug/wompi-config', (req, res) => {
     });
 });
 
-// 1. Generar enlace de pago - ESTRUCTURA CORRECTA PARA WOMPI SV
+// 1. Generar enlace de pago - ESTRUCTURA CORREGIDA
 app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     try {
         const { referencia, montoCents, descripcion, clienteId } = req.body;
@@ -97,7 +97,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         const token = tokenResp.data.access_token;
         console.log('✅ Token obtenido correctamente');
 
-        // ✅ ESTRUCTURA EXACTA PARA WOMPI EL SALVADOR
+        // ✅ ESTRUCTURA CORREGIDA SEGÚN LOS ERRORES
         const payload = {
             identificadorEnlaceComercio: referencia,
             monto: montoCents, // En centavos
@@ -105,14 +105,14 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             formaPago: {
                 permitirTarjetaCreditoDebido: true,
                 permitirPagoConPuntoAgricola: false,
-                permitirPagoEnCuotasAgricola: false,
+                permitirPagoEnCuotasAgricola: false, // ❌ Si es false, NO enviar cantidadMaximaCuotas
                 permitirPagoEnBitcoin: false,
                 permitePagoQuickPay: false
             },
-            cantidadMaximaCuotas: 1,
+            // ❌ ELIMINADO: cantidadMaximaCuotas (solo se usa si permitirPagoEnCuotasAgricola es true)
             infoProducto: {
                 descripcionProducto: `Renta para cliente: ${clienteId || 'N/A'}`,
-                urlImagenProducto: ""
+                urlImagenProducto: null // ✅ CORREGIDO: usar null en lugar de string vacío
             },
             configuracion: {
                 urlRedirect: `${REDIRECT_BASE_URL}/api/wompi/redirect-to-app?referencia=${referencia}`,
@@ -120,7 +120,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
                 esCantidadEditable: false,
                 cantidadPorDefecto: 1,
                 duracionInterfazIntentoMinutos: 30,
-                urlWebhook: WEBHOOK_URL, // ✅ TU WEBHOOK
+                urlWebhook: WEBHOOK_URL,
                 notificarTransaccionCliente: false
             },
             vigencia: {
@@ -141,6 +141,8 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             referencia: referencia,
             monto: `$${(montoCents / 100).toFixed(2)} USD`
         });
+
+        console.log('🔧 Payload corregido:', JSON.stringify(payload, null, 2));
 
         // Crear enlace en Wompi SV
         const wompiResp = await axios.post(
