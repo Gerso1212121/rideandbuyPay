@@ -9,31 +9,37 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// ✅ CONFIGURACIÓN CORREGIDA PARA EL SALVADOR
+// ✅ USA TUS URLs REALES
 const WOMPI_API_URL = process.env.WOMPI_API || 'https://api.wompi.sv/v1/';
 const WOMPI_AUTH_URL = process.env.WOMPI_AUTH || 'https://id.wompi.sv/';
-const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://chavarria-web-1.onrender.com/webhook/wompi';
+const WEBHOOK_URL = 'https://rideandbuypay.onrender.com/webhook/wompi'; // ✅ TU WEBHOOK REAL
+const REDIRECT_BASE_URL = 'https://rideandbuypay.onrender.com'; // ✅ TU BACKEND REAL
 
 // Límites en dólares
-const MONTO_MAXIMO = 100000; // $1000 USD en centavos
-const MONTO_MINIMO = 100;    // $1 USD en centavos
+const MONTO_MAXIMO = 100000;
+const MONTO_MINIMO = 100;
 
 const transacciones = new Map();
 
-// Endpoint de debug para verificar configuración
+// Endpoint de debug
 app.get('/api/debug/wompi-config', (req, res) => {
+    const clientId = process.env.WOMPI_CLIENT_ID;
+    const clientSecret = process.env.WOMPI_CLIENT_SECRET;
+    
     res.json({
-        WOMPI_CLIENT_ID: process.env.WOMPI_CLIENT_ID ? 'CONFIGURADO' : 'FALTANTE',
-        WOMPI_CLIENT_SECRET: process.env.WOMPI_CLIENT_SECRET ? 'CONFIGURADO' : 'FALTANTE',
+        WOMPI_CLIENT_ID: clientId ? `${clientId.substring(0, 8)}...` : 'FALTANTE',
+        WOMPI_CLIENT_SECRET: clientSecret ? `${clientSecret.substring(0, 8)}...` : 'FALTANTE',
         WOMPI_API: WOMPI_API_URL,
         WOMPI_AUTH: WOMPI_AUTH_URL,
         WEBHOOK_URL: WEBHOOK_URL,
+        REDIRECT_BASE_URL: REDIRECT_BASE_URL,
         MONTO_MAXIMO: `${MONTO_MAXIMO / 100} USD`,
-        MONTO_MINIMO: `${MONTO_MINIMO / 100} USD`
+        MONTO_MINIMO: `${MONTO_MINIMO / 100} USD`,
+        configuracionCorrecta: !!(clientId && clientSecret)
     });
 });
 
-// 1. Generar enlace de pago (VERSIÓN CORREGIDA)
+// 1. Generar enlace de pago - CON TUS URLs REALES
 app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     try {
         const { referencia, montoCents, descripcion, clienteId } = req.body;
@@ -53,7 +59,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         if (montoCents > MONTO_MAXIMO) {
             return res.status(400).json({
                 ok: false,
-                error: `Monto máximo permitido es $${MONTO_MAXIMO / 100} USD. Tu monto: $${(montoCents / 100).toFixed(2)} USD`
+                error: `Monto máximo permitido es $${MONTO_MAXIMO / 100} USD`
             });
         }
 
@@ -66,7 +72,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
         console.log('🔑 Obteniendo token de Wompi...');
         
-        // Obtener token de Wompi (CORREGIDO)
+        // Obtener token de Wompi
         const tokenResp = await axios.post(
             WOMPI_AUTH_URL + 'connect/token',
             new URLSearchParams({
@@ -91,26 +97,39 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         const token = tokenResp.data.access_token;
         console.log('✅ Token obtenido correctamente');
 
-        // ✅ PAYLOAD CORREGIDO para Wompi El Salvador
+        // ✅ REDIRECT_URL que apunta a tu endpoint de redirección
+        const redirectUrl = `${REDIRECT_BASE_URL}/api/wompi/redirect-to-app?referencia=${referencia}`;
+        
+        // ✅ PAYLOAD para Wompi SV
         const payload = {
-            name: descripcion || "Renta de Vehículo",
-            description: `Renta - ${clienteId || 'Cliente'}`,
-            single_use: true,
-            collect_shipping: false,
-            currency: "USD",
-            amount_in_cents: montoCents, // ✅ ENVÍADO EN CENTAVOS
-            redirect_url: `${process.env.FRONTEND_URL || 'https://tu-app.com'}/renta/resultado?referencia=${referencia}`,
-            reference: referencia,
+            data: {
+                attributes: {
+                    name: descripcion || "Renta de Vehículo",
+                    description: `Renta - ${clienteId || 'Cliente'}`,
+                    single_use: true,
+                    collect_shipping: false,
+                    currency: "USD",
+                    amount_in_cents: montoCents,
+                    redirect_url: redirectUrl, // ✅ Tu URL de redirección
+                    reference: referencia,
+                }
+            }
         };
 
+        // ✅ URL CORREGIDA
+        const apiUrl = WOMPI_API_URL.endsWith('/v1/') 
+            ? WOMPI_API_URL + 'payment_links'
+            : WOMPI_API_URL.replace(/\/$/, '') + '/v1/payment_links';
+
         console.log('📤 Enviando a Wompi SV:', {
-            url: WOMPI_API_URL + 'payment_links',
-            payload: payload
+            url: apiUrl,
+            referencia: referencia,
+            monto: `$${(montoCents / 100).toFixed(2)} USD`
         });
 
-        // Crear enlace en Wompi (CORREGIDO)
+        // Crear enlace en Wompi
         const wompiResp = await axios.post(
-            WOMPI_API_URL + 'payment_links', // ✅ ENDPOINT CORRECTO
+            apiUrl,
             payload, 
             {
                 headers: {
@@ -122,7 +141,11 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             }
         );
 
-        console.log('✅ Respuesta de Wompi SV:', wompiResp.data);
+        console.log('✅ Respuesta de Wompi SV recibida');
+
+        if (!wompiResp.data.data) {
+            throw new Error('Respuesta inválida de Wompi');
+        }
 
         // Guardar transacción
         transacciones.set(referencia, {
@@ -131,15 +154,15 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             descripcion,
             estado: 'pendiente',
             fecha: new Date(),
-            idEnlace: wompiResp.data.data?.id,
+            idEnlace: wompiResp.data.data.id,
             moneda: "USD",
-            urlEnlace: wompiResp.data.data?.checkout_url
+            urlEnlace: wompiResp.data.data.attributes.checkout_url
         });
 
         res.json({
             ok: true,
-            urlEnlace: wompiResp.data.data?.checkout_url,
-            idEnlace: wompiResp.data.data?.id,
+            urlEnlace: wompiResp.data.data.attributes.checkout_url,
+            idEnlace: wompiResp.data.data.id,
             referencia: referencia,
         });
 
@@ -147,25 +170,69 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         console.error('❌ Error generando enlace:', {
             message: err.message,
             response: err.response?.data,
-            status: err.response?.status
+            status: err.response?.status,
+            url: err.config?.url
         });
         
         let errorMessage = 'Error al generar enlace de pago';
+        let detalles = null;
+
         if (err.response?.data) {
             errorMessage = err.response.data.error?.message || 
                           err.response.data.mensajes?.[0] || 
-                          JSON.stringify(err.response.data);
+                          'Error en la respuesta de Wompi';
+            detalles = err.response.data;
+        } else if (err.code === 'ECONNREFUSED') {
+            errorMessage = 'No se puede conectar con el servicio de pagos';
+        } else if (err.response?.status === 404) {
+            errorMessage = 'Endpoint no encontrado. Verifica la URL de Wompi API';
         }
 
         res.status(500).json({ 
             ok: false, 
             error: errorMessage,
-            detalles: err.response?.data
+            detalles: detalles
         });
     }
 });
 
-// 2. Webhook (MANTIENE LA MISMA ESTRUCTURA)
+// 2. ✅ ENDPOINT PARA REDIRIGIR A LA APP MÓVIL
+app.get('/api/wompi/redirect-to-app', (req, res) => {
+    const { referencia } = req.query;
+    
+    console.log('🔀 Redirigiendo a app móvil para referencia:', referencia);
+    
+    // Para app móvil, redirigimos a un Deep Link
+    const deepLink = `tuapp://renta/resultado?referencia=${referencia}`;
+    
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Pago completado</title>
+            <script>
+                // Intentar abrir la app
+                window.location.href = '${deepLink}';
+                
+                // Si no funciona después de 2 segundos, mostrar mensaje
+                setTimeout(function() {
+                    document.getElementById('message').innerHTML = 
+                        '<p>Si no se abre automáticamente, <a href="${deepLink}">haz clic aquí</a></p>';
+                }, 2000);
+            </script>
+        </head>
+        <body>
+            <div style="text-align: center; margin-top: 50px;">
+                <h2>¡Pago procesado!</h2>
+                <p>Redirigiendo a la aplicación...</p>
+                <div id="message"></div>
+            </div>
+        </body>
+        </html>
+    `);
+});
+
+// 3. ✅ WEBHOOK - ESTE ES EL QUE YA TIENES CONFIGURADO
 app.post('/webhook/wompi', async (req, res) => {
     console.log('📥 Webhook recibido de Wompi:', JSON.stringify(req.body, null, 2));
     
@@ -223,7 +290,7 @@ app.post('/webhook/wompi', async (req, res) => {
     }
 });
 
-// 3. Endpoint para consultar estado
+// 4. Endpoint para consultar estado
 app.get('/api/wompi/estado/:referencia', (req, res) => {
     const { referencia } = req.params;
     const transaccion = transacciones.get(referencia);
@@ -260,5 +327,6 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🔧 Entorno: ${process.env.NODE_ENV || 'development'}`);
     console.log(`💰 Moneda: USD`);
     console.log(`🔗 Webhook: ${WEBHOOK_URL}`);
+    console.log(`🔀 Redirect: ${REDIRECT_BASE_URL}/api/wompi/redirect-to-app`);
     console.log(`🌐 Wompi API: ${WOMPI_API_URL}`);
 });
