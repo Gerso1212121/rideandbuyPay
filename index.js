@@ -9,9 +9,9 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// ✅ PRUEBA CON WOMPI INTERNACIONAL
-const WOMPI_API_URL = process.env.WOMPI_API || 'https://api.wompi.dev/v1/';
-const WOMPI_AUTH_URL = process.env.WOMPI_AUTH || 'https://id.wompi.dev/';
+// Configuración de Wompi para El Salvador
+const WOMPI_API_URL = 'https://api.wompi.sv/v1/';
+const WOMPI_AUTH_URL = 'https://id.wompi.sv/';
 const WEBHOOK_URL = 'https://rideandbuypay.onrender.com/webhook/wompi';
 const REDIRECT_BASE_URL = 'https://rideandbuypay.onrender.com';
 
@@ -21,7 +21,7 @@ const MONTO_MINIMO = 100;     // Mínimo permitido en centavos (1 USD)
 
 const transacciones = new Map();
 
-// Endpoint de debug ACTUALIZADO
+// Endpoint de debug
 app.get('/api/debug/wompi-config', (req, res) => {
     const clientId = process.env.WOMPI_CLIENT_ID;
     const clientSecret = process.env.WOMPI_CLIENT_SECRET;
@@ -36,11 +36,11 @@ app.get('/api/debug/wompi-config', (req, res) => {
         MONTO_MAXIMO: `${MONTO_MAXIMO / 100} USD`,
         MONTO_MINIMO: `${MONTO_MINIMO / 100} USD`,
         configuracionCorrecta: !!(clientId && clientSecret),
-        entorno: 'WOMPI INTERNACIONAL' // ← Nuevo
+        entorno: 'WOMPI EL SALVADOR'
     });
 });
 
-// 1. Generar enlace de pago - WOMPI INTERNACIONAL
+// 1. Generar enlace de pago - WOMPI
 app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     try {
         const { referencia, montoCents, descripcion, clienteId } = req.body;
@@ -73,7 +73,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
         console.log('🔑 Obteniendo token de Wompi...');
         
-        // Obtener token de Wompi INTERNACIONAL
+        // Obtener token de Wompi
         const tokenResp = await axios.post(
             WOMPI_AUTH_URL + 'connect/token',
             new URLSearchParams({
@@ -105,13 +105,13 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             "nombreProducto": descripcion || "Renta de Vehículo",
             "formaPago": {
                 "permitirTarjetaCreditoDebido": true,
-                "permitirPagoConPuntoAgricola": false,  // Si no se desea este tipo de pago, ponlo como false
+                "permitirPagoConPuntoAgricola": false,
                 "permitirPagoEnCuotasAgricola": false
             },
             "cantidadMaximaCuotas": "Tres",
             "infoProducto": {
                 "descripcionProducto": "Renta de vehículo por 1 día",
-                "urlImagenProducto": "https://link-a-imagen.com/imagen.jpg" // Usa una URL válida para la imagen
+                "urlImagenProducto": "https://link-a-imagen.com/imagen.jpg"
             },
             "configuracion": {
                 "urlRedirect": `${REDIRECT_BASE_URL}/api/wompi/redirect-to-app?referencia=${referencia}`,
@@ -185,156 +185,8 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     }
 });
 
-
-// 2. ENDPOINT PARA REDIRIGIR 
-app.get('/api/wompi/redirect-to-app', (req, res) => {
-    const { referencia } = req.query;
-    
-    console.log('🔀 Redirigiendo a app móvil para referencia:', referencia);
-    
-    const deepLink = `tuapp://payment/result?referencia=${referencia}`;
-    
-    res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Pago completado</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <script>
-                setTimeout(function() {
-                    window.location.href = '${deepLink}';
-                }, 100);
-                
-                setTimeout(function() {
-                    document.getElementById('status').innerHTML = 
-                        '<h3>✅ Pago procesado</h3>' +
-                        '<p>Redirigiendo a la aplicación...</p>';
-                }, 500);
-            </script>
-            <style>
-                body { 
-                    font-family: Arial, sans-serif; 
-                    text-align: center; 
-                    padding: 50px 20px;
-                    background: #f5f5f5;
-                }
-                .container {
-                    background: white;
-                    padding: 30px;
-                    border-radius: 10px;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                    margin: 0 auto;
-                    max-width: 400px;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div id="status">
-                    <h2>🔄 Procesando...</h2>
-                    <p>Por favor espera</p>
-                </div>
-            </div>
-        </body>
-        </html>
-    `);
-});
-
-// 3. WEBHOOK (se mantiene igual)
-app.post('/webhook/wompi', async (req, res) => {
-    console.log('📥 Webhook recibido de Wompi:', JSON.stringify(req.body, null, 2));
-    
-    const event = req.body?.event || req.body?.Evento;
-    const data = req.body?.data || req.body?.Datos;
-    const reference = data?.reference || data?.IdentificadorEnlaceComercio;
-
-    if (!reference) {
-        console.warn('⚠️ Webhook sin referencia válida');
-        return res.status(400).json({ error: 'Referencia faltante' });
-    }
-
-    try {
-        const transaccion = transacciones.get(reference);
-        
-        if (!transaccion) {
-            console.warn('⚠️ Transacción no encontrada:', reference);
-            return res.status(404).json({ error: 'Transacción no encontrada' });
-        }
-
-        // Procesar según el evento
-        switch (event) {
-            case 'transaction.approved':
-            case 'TransaccionAprobada':
-                transaccion.estado = 'aprobado';
-                transaccion.fechaAprobacion = new Date();
-                transaccion.idTransaccion = data?.id || data?.IdTransaccion;
-                console.log('✅ Pago APROBADO:', reference);
-                break;
-
-            case 'transaction.declined':
-            case 'TransaccionDeclinada':
-                transaccion.estado = 'rechazado';
-                transaccion.razon = data?.reason || data?.Razon;
-                console.log('❌ Pago RECHAZADO:', reference);
-                break;
-
-            case 'transaction.failed':
-            case 'TransaccionFallida':
-                transaccion.estado = 'fallido';
-                transaccion.error = data?.error || data?.Error;
-                console.log('💥 Pago FALLIDO:', reference);
-                break;
-
-            default:
-                console.log('ℹ️ Evento no manejado:', event);
-        }
-
-        transacciones.set(reference, transaccion);
-        res.json({ ok: true, mensaje: 'Webhook procesado' });
-
-    } catch (error) {
-        console.error('❌ Error procesando webhook:', error);
-        res.status(500).json({ error: 'Error interno' });
-    }
-});
-
-// 4. Endpoint para consultar estado
-app.get('/api/wompi/estado/:referencia', (req, res) => {
-    const { referencia } = req.params;
-    const transaccion = transacciones.get(referencia);
-
-    if (!transaccion) {
-        return res.status(404).json({ ok: false, error: 'Transacción no encontrada' });
-    }
-
-    res.json({
-        ok: true,
-        referencia,
-        estado: transaccion.estado,
-        montoCents: transaccion.montoCents,
-        fecha: transaccion.fecha,
-        idTransaccion: transaccion.idTransaccion,
-        moneda: transaccion.moneda
-    });
-});
-
-// Health check
-app.get('/api/health', (req, res) => {
-    res.json({ 
-        ok: true, 
-        message: 'Servidor de pagos funcionando',
-        transaccionesActivas: transacciones.size,
-        moneda: 'USD',
-        timestamp: new Date().toISOString()
-    });
-});
-
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor de pagos corriendo en puerto ${PORT}`);
-    console.log(`🔧 Entorno: WOMPI INTERNACIONAL`); // ← Cambiado
-    console.log(`💰 Moneda: USD`);
-    console.log(`🔗 Webhook: ${WEBHOOK_URL}`);
-    console.log(`🔀 Redirect: ${REDIRECT_BASE_URL}/api/wompi/redirect-to-app`);
-    console.log(`🌐 Wompi API: ${WOMPI_API_URL}`);
+    console.log(`🔧 Entorno: WOMPI EL SALVADOR`);
 });
