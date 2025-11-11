@@ -2,7 +2,7 @@
   "name": "wompi-backend",
   "version": "1.0.0",
   "description": "Backend para pagos con Wompi + Supabase",
-  "main": "server.js",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
