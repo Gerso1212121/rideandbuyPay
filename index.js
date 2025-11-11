@@ -5,11 +5,12 @@ const axios = require('axios');
 
 const app = express();
 
-// Middleware (sin compression)
+// Middleware
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-const MONTO_MAXIMO = 60000; // $600 USD en centavos
+// ✅ CORREGIDO: Límite actualizado según el error de Wompi
+const MONTO_MAXIMO = 100000; // $1000 USD en centavos (1000 * 100)
 
 // Almacenamiento en memoria
 const transacciones = new Map();
@@ -21,11 +22,19 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
         console.log('🚗 Generando enlace de pago:', { referencia, montoCents });
 
-        // Validar monto máximo
+        // ✅ CORREGIDO: Validar monto máximo según límite de Wompi
         if (montoCents > MONTO_MAXIMO) {
             return res.status(400).json({
                 ok: false,
-                error: `Monto máximo permitido es $${MONTO_MAXIMO / 100} USD`
+                error: `Monto máximo permitido es $${MONTO_MAXIMO / 100} USD. Tu monto: $${(montoCents / 100).toFixed(2)} USD`
+            });
+        }
+
+        // ✅ CORREGIDO: Validar monto mínimo
+        if (montoCents < 100) { // Mínimo $1 USD
+            return res.status(400).json({
+                ok: false,
+                error: `Monto mínimo permitido es $1.00 USD`
             });
         }
 
@@ -45,17 +54,20 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
         const token = tokenResp.data.access_token;
 
-        // Crear payload para Wompi
+        // ✅ CORREGIDO: Crear payload para Wompi con moneda COP
         const payload = {
             identificadorEnlaceComercio: referencia,
             monto: montoCents,
             nombreProducto: descripcion || "Renta de Vehículo",
+            moneda: "COP", // ✅ Especificar moneda COP
             configuracion: {
                 duracionInterfazIntentoMinutos: 30,
-                urlWebhook: `${process.env.BACKEND_URL || 'https://tu-backend.onrender.com'}/webhook/wompi`,
+                urlWebhook: `${process.env.BACKEND_URL || 'https://rideandbuypay.onrender.com'}/webhook/wompi`,
                 urlRedirect: `${process.env.FRONTEND_URL || 'https://tu-app.com'}/renta/resultado?referencia=${referencia}`,
             },
         };
+
+        console.log('📤 Enviando a Wompi:', payload);
 
         // Crear enlace en Wompi
         const wompiResp = await axios.post(
@@ -69,6 +81,8 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             }
         );
 
+        console.log('✅ Respuesta de Wompi:', wompiResp.data);
+
         // Guardar transacción en memoria
         transacciones.set(referencia, {
             montoCents,
@@ -76,7 +90,8 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             descripcion,
             estado: 'pendiente',
             fecha: new Date(),
-            idEnlace: wompiResp.data.idEnlace
+            idEnlace: wompiResp.data.idEnlace,
+            moneda: "COP"
         });
 
         console.log('✅ Enlace generado para:', referencia);
@@ -90,12 +105,24 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
     } catch (err) {
         console.error('❌ Error generando enlace:', err.response?.data || err.message);
+        
+        // ✅ CORREGIDO: Mejor manejo de errores
+        let errorMessage = 'Error al generar enlace de pago';
+        if (err.response?.data) {
+            errorMessage = err.response.data.mensajes?.[0] || JSON.stringify(err.response.data);
+        } else if (err.message) {
+            errorMessage = err.message;
+        }
+
         res.status(500).json({ 
             ok: false, 
-            error: 'Error al generar enlace de pago: ' + (err.response?.data?.message || err.message)
+            error: errorMessage,
+            detalles: err.response?.data
         });
     }
 });
+
+// Los demás endpoints (webhook, estado, health check) se mantienen igual...
 
 // 2. Webhook que Wompi llama automáticamente
 app.post('/webhook/wompi', async (req, res) => {
@@ -184,8 +211,9 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor de pagos corriendo en puerto ${PORT}`);
     console.log(`🔧 Entorno: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`💰 Límite máximo por transacción: $${MONTO_MAXIMO / 100} USD`);
 });
