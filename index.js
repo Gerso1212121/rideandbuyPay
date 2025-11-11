@@ -47,7 +47,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
         console.log('🚗 Generando enlace de pago:', { referencia, montoCents });
 
-        // ✅ VERIFICAR CREDENCIALES
+        // Verificar credenciales
         if (!process.env.WOMPI_CLIENT_ID || !process.env.WOMPI_CLIENT_SECRET) {
             console.error('❌ Credenciales Wompi faltantes');
             return res.status(500).json({ 
@@ -98,34 +98,43 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         const token = tokenResp.data.access_token;
         console.log('✅ Token obtenido correctamente');
 
-        // ✅ REDIRECT_URL 
-        const redirectUrl = `${REDIRECT_BASE_URL}/api/wompi/redirect-to-app?referencia=${referencia}`;
-        
-        // ✅ PAYLOAD para Wompi INTERNACIONAL
+        // Configurar la solicitud a Wompi
         const payload = {
-            name: descripcion || "Renta de Vehículo",
-            description: `Renta - ${clienteId || 'Cliente'}`,
-            single_use: true,
-            collect_shipping: false,
-            currency: "USD",
-            amount_in_cents: montoCents,
-            redirect_url: redirectUrl,
-            reference: referencia,
+            "identificadorEnlaceComercio": referencia,
+            "monto": montoCents,
+            "nombreProducto": descripcion || "Renta de Vehículo",
+            "formaPago": {
+                "permitirTarjetaCreditoDebido": true,
+                "permitirPagoConPuntoAgricola": false,  // Si no se desea este tipo de pago, ponlo como false
+                "permitirPagoEnCuotasAgricola": false
+            },
+            "cantidadMaximaCuotas": "Tres",
+            "infoProducto": {
+                "descripcionProducto": "Renta de vehículo por 1 día",
+                "urlImagenProducto": "https://link-a-imagen.com/imagen.jpg" // Usa una URL válida para la imagen
+            },
+            "configuracion": {
+                "urlRedirect": `${REDIRECT_BASE_URL}/api/wompi/redirect-to-app?referencia=${referencia}`,
+                "esMontoEditable": false,
+                "esCantidadEditable": false,
+                "cantidadPorDefecto": 1,
+                "duracionInterfazIntentoMinutos": 15,
+                "urlRetorno": `${REDIRECT_BASE_URL}/api/wompi/return`,
+                "emailsNotificacion": "example@correo.com",
+                "urlWebhook": WEBHOOK_URL,
+                "notificarTransaccionCliente": true
+            },
+            "vigencia": {
+                "fechaInicio": new Date().toISOString(),
+                "fechaFin": "2025-06-25T16:45:19.206Z"
+            }
         };
 
-        // ✅ URL para Wompi Internacional
-        const apiUrl = WOMPI_API_URL.endsWith('/v1/') 
-            ? WOMPI_API_URL + 'payment_links'
-            : WOMPI_API_URL.replace(/\/$/, '') + '/v1/payment_links';
+        // Solicitar enlace de pago a Wompi
+        const apiUrl = WOMPI_API_URL + 'payment_links';
 
-        console.log('🌐 ENTORNO WOMPI INTERNACIONAL');
-        console.log('📤 Enviando a Wompi:', {
-            url: apiUrl,
-            referencia: referencia,
-            monto: `$${(montoCents / 100).toFixed(2)} USD`
-        });
+        console.log('🌐 Enviando a Wompi:', apiUrl);
 
-        // Crear enlace en Wompi INTERNACIONAL
         const wompiResp = await axios.post(
             apiUrl,
             payload, 
@@ -160,39 +169,22 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         res.json({
             ok: true,
             urlEnlace: wompiResp.data.data.attributes?.checkout_url || wompiResp.data.data.url,
+            urlQrCodeEnlace: wompiResp.data.data.attributes?.qr_code_url,
             idEnlace: wompiResp.data.data.id,
             referencia: referencia,
         });
 
     } catch (err) {
-        console.error('❌ Error generando enlace:', {
-            message: err.message,
-            response: err.response?.data,
-            status: err.response?.status,
-            url: err.config?.url
-        });
+        console.error('❌ Error generando enlace:', err);
         
-        let errorMessage = 'Error al generar enlace de pago';
-        let detalles = null;
-
-        if (err.response?.data) {
-            errorMessage = err.response.data.error?.message || 
-                          err.response.data.mensajes?.[0] || 
-                          'Error en la respuesta de Wompi';
-            detalles = err.response.data;
-        } else if (err.code === 'ECONNREFUSED') {
-            errorMessage = 'No se puede conectar con Wompi';
-        } else if (err.response?.status === 404) {
-            errorMessage = 'Endpoint no encontrado. Probablemente credenciales/entorno incorrectos';
-        }
-
         res.status(500).json({ 
             ok: false, 
-            error: errorMessage,
-            detalles: detalles
+            error: err.message,
+            detalles: err.response?.data
         });
     }
 });
+
 
 // 2. ENDPOINT PARA REDIRIGIR 
 app.get('/api/wompi/redirect-to-app', (req, res) => {
