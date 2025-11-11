@@ -9,46 +9,45 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// ✅ CONFIGURACIÓN PARA WOMPI EL SALVADOR
+// ✅ CONFIGURACIÓN MEJORADA
 const WOMPI_API_URL = process.env.WOMPI_API || 'https://api.wompi.sv/';
 const WOMPI_AUTH_URL = process.env.WOMPI_AUTH || 'https://id.wompi.sv/';
 const WEBHOOK_URL = 'https://rideandbuypay.onrender.com/webhook/wompi';
 const REDIRECT_BASE_URL = 'https://rideandbuypay.onrender.com';
 
-// Límites en dólares
-const MONTO_MAXIMO = 100000; // $1000 USD
-const MONTO_MINIMO = 100;    // $1 USD
+const MONTO_MAXIMO = 100000;
+const MONTO_MINIMO = 100;
 
 const transacciones = new Map();
 
-// Endpoint de debug
-app.get('/api/debug/wompi-config', (req, res) => {
-    const clientId = process.env.WOMPI_CLIENT_ID;
-    const clientSecret = process.env.WOMPI_CLIENT_SECRET;
-    
-    res.json({
-        WOMPI_CLIENT_ID: clientId ? 'CONFIGURADO' : 'FALTANTE',
-        WOMPI_CLIENT_SECRET: clientSecret ? 'CONFIGURADO' : 'FALTANTE',
-        WOMPI_API: WOMPI_API_URL,
-        WOMPI_AUTH: WOMPI_AUTH_URL,
-        WEBHOOK_URL: WEBHOOK_URL,
-        REDIRECT_BASE_URL: REDIRECT_BASE_URL,
-        MONTO_MAXIMO: `${MONTO_MAXIMO / 100} USD`,
-        MONTO_MINIMO: `${MONTO_MINIMO / 100} USD`,
-        configuracionCorrecta: !!(clientId && clientSecret),
-        entorno: 'WOMPI EL SALVADOR'
-    });
-});
+// ✅ NUEVO: Detectar si es app móvil
+function esAppMovil(userAgent) {
+    return userAgent && (
+        userAgent.includes('EzRide') ||
+        userAgent.includes('Flutter') ||
+        userAgent.includes('Android') ||
+        userAgent.includes('iOS') ||
+        userAgent.includes('Mobile') ||
+        userAgent.includes('App')
+    );
+}
 
-// 1. Generar enlace de pago - CON MONEDA EXPLÍCITA
-// 1. Generar enlace de pago - CON MONTO EN DÓLARES
+// 1. ✅ GENERAR ENLACE MEJORADO - Con detección de app
 app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     try {
-        const { referencia, montoCents, descripcion, clienteId } = req.body;
+        const { referencia, montoCents, descripcion, clienteId, fromApp = false } = req.body;
+        const userAgent = req.headers['user-agent'] || '';
 
-        console.log('🚗 Generando enlace de pago:', { referencia, montoCents });
+        console.log('🚗 Generando enlace de pago:', { 
+            referencia, 
+            montoCents, 
+            fromApp,
+            userAgent: userAgent.substring(0, 100) 
+        });
 
-        // ✅ VERIFICAR CREDENCIALES
+        // ✅ DETECTAR APP MÓVIL AUTOMÁTICAMENTE
+        const esDesdeApp = fromApp || esAppMovil(userAgent);
+
         if (!process.env.WOMPI_CLIENT_ID || !process.env.WOMPI_CLIENT_SECRET) {
             return res.status(500).json({ 
                 ok: false, 
@@ -56,10 +55,8 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             });
         }
 
-        // Convertir centavos a dólares para Wompi SV
         const montoDolares = montoCents;
         
-        // Validar monto en dólares
         if (montoDolares > (MONTO_MAXIMO / 100)) {
             return res.status(400).json({
                 ok: false,
@@ -76,7 +73,6 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
         console.log('🔑 Obteniendo token de Wompi...');
         
-        // Obtener token de Wompi
         const tokenResp = await axios.post(
             WOMPI_AUTH_URL + 'connect/token',
             new URLSearchParams({
@@ -99,12 +95,11 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         }
 
         const token = tokenResp.data.access_token;
-        console.log('✅ Token obtenido correctamente');
 
-        // ✅ ESTRUCTURA CON MONTO EN DÓLARES
+        // ✅ PAYLOAD MEJORADO
         const payload = {
             identificadorEnlaceComercio: referencia,
-            monto: montoDolares, // ✅ CAMBIADO: Ahora en dólares
+            monto: montoDolares,
             nombreProducto: descripcion || "Renta de Vehículo",
             moneda: "USD",
             formaPago: {
@@ -137,19 +132,14 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             }
         };
 
-        // ✅ URL CORRECTA PARA WOMPI SV
         const apiUrl = WOMPI_API_URL + 'EnlacePago';
 
-        console.log('📤 Enviando a Wompi El Salvador:', {
-            url: apiUrl,
-            referencia: referencia,
-            montoEnDolares: `$${montoDolares.toFixed(2)} USD`,
-            montoEnCentavos: montoCents
+        console.log('📤 Enviando a Wompi:', {
+            referencia,
+            montoEnDolares: `$${montoDolares.toFixed(2)}`,
+            desdeApp: esDesdeApp
         });
 
-        console.log('🔧 Payload con monto en dólares:', JSON.stringify(payload, null, 2));
-
-        // Crear enlace en Wompi SV
         const wompiResp = await axios.post(
             apiUrl,
             payload, 
@@ -163,9 +153,9 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             }
         );
 
-        console.log('✅ Respuesta de Wompi SV:', wompiResp.data);
+        console.log('✅ Respuesta de Wompi:', wompiResp.data);
 
-        // Guardar transacción
+        // ✅ GUARDAR INFORMACIÓN DE LA APP
         transacciones.set(referencia, {
             montoCents,
             clienteId,
@@ -174,7 +164,8 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             fecha: new Date(),
             idEnlace: wompiResp.data.idEnlace,
             moneda: "USD",
-            urlEnlace: wompiResp.data.urlEnlace
+            urlEnlace: wompiResp.data.urlEnlace,
+            desdeApp: esDesdeApp // ✅ GUARDAR SI ES DESDE APP
         });
 
         res.json({
@@ -182,18 +173,13 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             urlEnlace: wompiResp.data.urlEnlace,
             idEnlace: wompiResp.data.idEnlace,
             referencia: referencia,
+            desdeApp: esDesdeApp
         });
 
     } catch (err) {
-        console.error('❌ Error generando enlace:', {
-            message: err.message,
-            response: err.response?.data,
-            status: err.response?.status
-        });
+        console.error('❌ Error generando enlace:', err.message);
         
         let errorMessage = 'Error al generar enlace de pago';
-        let detalles = err.response?.data;
-
         if (err.response?.data?.mensajes) {
             errorMessage = err.response.data.mensajes.join(', ');
         }
@@ -201,53 +187,157 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         res.status(500).json({ 
             ok: false, 
             error: errorMessage,
-            detalles: detalles
+            detalles: err.response?.data
         });
     }
 });
 
-// Los demás endpoints se mantienen igual...
-// 2. ENDPOINT PARA REDIRIGIR 
+// 2. ✅ ENDPOINT DE REDIRECCIÓN MEJORADO
 app.get('/api/wompi/redirect-to-app', (req, res) => {
     const { referencia } = req.query;
+    const userAgent = req.headers['user-agent'] || '';
     
-    console.log('🔀 Redirigiendo a app móvil para referencia:', referencia);
-    
-    const deepLink = `ezride://payment/result?referencia=${referencia}`;
-    
-    res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Pago completado</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <script>
-                setTimeout(() => window.location.href = '${deepLink}', 100);
-                setTimeout(() => {
-                    document.getElementById('status').innerHTML = 
-                        '<h3>✅ Pago procesado</h3><p>Redirigiendo...</p>';
-                }, 500);
-            </script>
-            <style>
-                body { font-family: Arial; text-align: center; padding: 50px 20px; background: #f5f5f5; }
-                .container { background: white; padding: 30px; border-radius: 10px; margin: 0 auto; max-width: 400px; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div id="status">
-                    <h2>🔄 Procesando...</h2>
-                    <p>Por favor espera</p>
+    console.log('🔀 Redirección desde Wompi:', { 
+        referencia, 
+        userAgent: userAgent.substring(0, 100) 
+    });
+
+    // ✅ OBTENER TRANSACCIÓN Y ESTADO ACTUAL
+    const transaccion = transacciones.get(referencia);
+    const estado = transaccion?.estado || 'pendiente';
+    const desdeApp = transaccion?.desdeApp || false;
+
+    console.log(`📊 Estado para redirección: ${referencia} -> ${estado}, DesdeApp: ${desdeApp}`);
+
+    // ✅ DETECTAR SI ES APP MÓVIL
+    const esApp = desdeApp || esAppMovil(userAgent);
+
+    if (esApp) {
+        // ✅ REDIRIGIR A APP CON ESTADO ACTUAL
+        console.log('📱 Redirigiendo a app móvil');
+        const deepLink = `ezride://payment/result?referencia=${referencia}&estado=${estado}`;
+        
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Redirigiendo a EzRide</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <script>
+                    // ✅ INTENTAR ABRIR APP INMEDIATAMENTE
+                    window.location.href = '${deepLink}';
+                    
+                    // ✅ FALLBACK DESPUÉS DE 3 SEGUNDOS
+                    setTimeout(function() {
+                        document.getElementById('appContent').style.display = 'none';
+                        document.getElementById('fallbackContent').style.display = 'block';
+                    }, 3000);
+
+                    // ✅ ALTERNATIVA: CERRAR WEBVIEW SI ESTÁ EN APP
+                    function cerrarWebView() {
+                        if (window.flutter_inappwebview) {
+                            window.flutter_inappwebview.callHandler('cerrarWebView');
+                        }
+                    }
+                    
+                    // Intentar cerrar después de redirigir
+                    setTimeout(cerrarWebView, 1000);
+                </script>
+                <style>
+                    body { 
+                        font-family: Arial, sans-serif; 
+                        text-align: center; 
+                        padding: 50px 20px; 
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                        margin: 0;
+                    }
+                    .container { 
+                        background: rgba(255,255,255,0.1); 
+                        padding: 40px; 
+                        border-radius: 15px; 
+                        margin: 0 auto; 
+                        max-width: 500px;
+                        backdrop-filter: blur(10px);
+                        border: 1px solid rgba(255,255,255,0.2);
+                    }
+                    .btn {
+                        background: white;
+                        color: #667eea;
+                        padding: 12px 24px;
+                        border-radius: 25px;
+                        text-decoration: none;
+                        display: inline-block;
+                        margin: 10px;
+                        font-weight: bold;
+                        border: none;
+                        cursor: pointer;
+                    }
+                    .hidden {
+                        display: none;
+                    }
+                    .spinner {
+                        border: 4px solid rgba(255,255,255,0.3);
+                        border-radius: 50%;
+                        border-top: 4px solid white;
+                        width: 40px;
+                        height: 40px;
+                        animation: spin 1s linear infinite;
+                        margin: 20px auto;
+                    }
+                    @keyframes spin {
+                        0% { transform: rotate(0deg); }
+                        100% { transform: rotate(360deg); }
+                    }
+                    .status-badge {
+                        background: rgba(255,255,255,0.2);
+                        padding: 8px 16px;
+                        border-radius: 20px;
+                        display: inline-block;
+                        margin: 10px;
+                        font-size: 14px;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div id="appContent">
+                        <h2>🎯 Procesando Pago</h2>
+                        <div class="spinner"></div>
+                        <p>Estamos redirigiéndote a la app...</p>
+                        <div class="status-badge">
+                            <strong>Estado:</strong> ${estado.toUpperCase()}
+                        </div>
+                        <div class="status-badge">
+                            <strong>Referencia:</strong> ${referencia}
+                        </div>
+                    </div>
+                    
+                    <div id="fallbackContent" class="hidden">
+                        <h2>📱 Abrir en EzRide</h2>
+                        <p>Si la redirección automática no funciona:</p>
+                        <a href="${deepLink}" class="btn">Abrir en EzRide App</a>
+                        <p style="margin-top: 20px; font-size: 12px; opacity: 0.8;">
+                            O copia este enlace manualmente:<br>
+                            <code style="background: rgba(0,0,0,0.2); padding: 5px; border-radius: 5px;">
+                                ${deepLink}
+                            </code>
+                        </p>
+                    </div>
                 </div>
-            </div>
-        </body>
-        </html>
-    `);
+            </body>
+            </html>
+        `);
+    } else {
+        // ✅ MOSTRAR PÁGINA WEB PARA NAVEGADOR NORMAL
+        console.log('🌐 Mostrando página web normal');
+        res.send(generarPaginaWebResultado(referencia, estado));
+    }
 });
 
-// 3. WEBHOOK 
+// 3. ✅ WEBHOOK MEJORADO
 app.post('/webhook/wompi', async (req, res) => {
-    console.log('📥 Webhook recibido de Wompi:', JSON.stringify(req.body, null, 2));
+    console.log('📥 Webhook recibido:', JSON.stringify(req.body, null, 2));
     
     const event = req.body?.event || req.body?.Evento;
     const data = req.body?.data || req.body?.Datos;
@@ -261,48 +351,54 @@ app.post('/webhook/wompi', async (req, res) => {
         const transaccion = transacciones.get(reference);
         
         if (!transaccion) {
-            console.warn('⚠️ Transacción no encontrada:', reference);
+            console.warn('⚠️ Transacción no encontrada en webhook:', reference);
             return res.status(404).json({ error: 'Transacción no encontrada' });
         }
 
-        // Procesar según el evento
+        let estadoAnterior = transaccion.estado;
+
         switch (event) {
             case 'transaction.approved':
             case 'TransaccionAprobada':
                 transaccion.estado = 'aprobado';
                 transaccion.fechaAprobacion = new Date();
                 transaccion.idTransaccion = data?.id || data?.IdTransaccion;
-                console.log('✅ Pago APROBADO:', reference);
+                console.log('✅ Pago APROBADO via Webhook:', reference);
                 break;
 
             case 'transaction.declined':
             case 'TransaccionDeclinada':
                 transaccion.estado = 'rechazado';
                 transaccion.razon = data?.reason || data?.Razon;
-                console.log('❌ Pago RECHAZADO:', reference);
+                console.log('❌ Pago RECHAZADO via Webhook:', reference);
                 break;
 
             case 'transaction.failed':
             case 'TransaccionFallida':
                 transaccion.estado = 'fallido';
                 transaccion.error = data?.error || data?.Error;
-                console.log('💥 Pago FALLIDO:', reference);
+                console.log('💥 Pago FALLIDO via Webhook:', reference);
                 break;
 
             default:
                 console.log('ℹ️ Evento no manejado:', event);
         }
 
+        // ✅ NOTIFICAR CAMBIO DE ESTADO
+        if (estadoAnterior !== transaccion.estado) {
+            console.log(`🔄 Estado actualizado: ${estadoAnterior} → ${transaccion.estado}`);
+        }
+
         transacciones.set(reference, transaccion);
         res.json({ ok: true, mensaje: 'Webhook procesado' });
 
     } catch (error) {
-        console.error('❌ Error procesando webhook:', error);
+        console.error('❌ Error en webhook:', error);
         res.status(500).json({ error: 'Error interno' });
     }
 });
 
-// 4. Endpoint para consultar estado
+// 4. ✅ ENDPOINTS ADICIONALES (se mantienen igual)
 app.get('/api/wompi/estado/:referencia', (req, res) => {
     const { referencia } = req.params;
     const transaccion = transacciones.get(referencia);
@@ -318,11 +414,11 @@ app.get('/api/wompi/estado/:referencia', (req, res) => {
         montoCents: transaccion.montoCents,
         fecha: transaccion.fecha,
         idTransaccion: transaccion.idTransaccion,
-        moneda: transaccion.moneda
+        moneda: transaccion.moneda,
+        desdeApp: transaccion.desdeApp
     });
 });
 
-// Health check
 app.get('/api/health', (req, res) => {
     res.json({ 
         ok: true, 
@@ -333,6 +429,40 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+// ✅ FUNCIÓN AUXILIAR PARA PÁGINA WEB
+function generarPaginaWebResultado(referencia, estado) {
+    const config = {
+        'aprobado': { titulo: '✅ Pago Exitoso', mensaje: 'Tu pago ha sido procesado exitosamente.', color: '#10B981' },
+        'rechazado': { titulo: '❌ Pago Rechazado', mensaje: 'El pago fue rechazado. Intenta con otro método.', color: '#EF4444' },
+        'fallido': { titulo: '💥 Error en Pago', mensaje: 'Ocurrió un error al procesar tu pago.', color: '#F59E0B' },
+        'pendiente': { titulo: '🔄 Procesando Pago', mensaje: 'Estamos verificando tu transacción.', color: '#6366F1' }
+    };
+
+    const conf = config[estado] || config.pendiente;
+
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>${conf.titulo}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body { font-family: Arial; text-align: center; padding: 50px 20px; background: #f5f5f5; }
+            .container { background: white; padding: 30px; border-radius: 10px; margin: 0 auto; max-width: 400px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>${conf.titulo}</h1>
+            <p>${conf.mensaje}</p>
+            <p><strong>Referencia:</strong> ${referencia}</p>
+            <p><strong>Estado:</strong> ${estado}</p>
+        </div>
+    </body>
+    </html>
+    `;
+}
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor de pagos corriendo en puerto ${PORT}`);
@@ -340,5 +470,4 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`💰 Moneda: USD`);
     console.log(`🔗 Webhook: ${WEBHOOK_URL}`);
     console.log(`🔀 Redirect: ${REDIRECT_BASE_URL}/api/wompi/redirect-to-app`);
-    console.log(`🌐 Wompi API: ${WOMPI_API_URL}`);
 });
