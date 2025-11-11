@@ -1,19 +1,17 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const compression = require('compression');
 const axios = require('axios');
 
 const app = express();
 
-// Middleware
-app.use(compression());
+// Middleware (sin compression)
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 const MONTO_MAXIMO = 60000; // $600 USD en centavos
 
-// Almacenamiento en memoria (puedes usar Redis en producción)
+// Almacenamiento en memoria
 const transacciones = new Map();
 
 // 1. Generar enlace de pago
@@ -33,7 +31,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
         // Obtener token de Wompi
         const tokenResp = await axios.post(
-            process.env.WOMPI_AUTH + 'connect/token',
+            (process.env.WOMPI_AUTH || 'https://id.wompi.dev/') + 'connect/token',
             new URLSearchParams({
                 grant_type: 'client_credentials',
                 client_id: process.env.WOMPI_CLIENT_ID,
@@ -54,14 +52,14 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             nombreProducto: descripcion || "Renta de Vehículo",
             configuracion: {
                 duracionInterfazIntentoMinutos: 30,
-                urlWebhook: `${process.env.BACKEND_URL}/webhook/wompi`, // 👈 Wompi llamará aquí
-                urlRedirect: `${process.env.FRONTEND_URL}/renta/resultado?referencia=${referencia}`,
+                urlWebhook: `${process.env.BACKEND_URL || 'https://tu-backend.onrender.com'}/webhook/wompi`,
+                urlRedirect: `${process.env.FRONTEND_URL || 'https://tu-app.com'}/renta/resultado?referencia=${referencia}`,
             },
         };
 
         // Crear enlace en Wompi
         const wompiResp = await axios.post(
-            process.env.WOMPI_API + 'EnlacePago', 
+            (process.env.WOMPI_API || 'https://api.wompi.dev/') + 'EnlacePago', 
             payload, 
             {
                 headers: {
@@ -94,7 +92,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         console.error('❌ Error generando enlace:', err.response?.data || err.message);
         res.status(500).json({ 
             ok: false, 
-            error: 'Error al generar enlace de pago'
+            error: 'Error al generar enlace de pago: ' + (err.response?.data?.message || err.message)
         });
     }
 });
@@ -125,12 +123,8 @@ app.post('/webhook/wompi', async (req, res) => {
             case 'TransaccionAprobada':
                 transaccion.estado = 'aprobado';
                 transaccion.fechaAprobacion = new Date();
-                console.log('✅ Pago APROBADO:', referencia);
-                
-                // Aquí puedes: 
-                // - Activar la renta
-                // - Enviar email de confirmación
-                // - Notificar a Flutter vía WebSockets
+                transaccion.idTransaccion = datos?.IdTransaccion;
+                console.log('✅ Pago APROBADO:', referencia, 'ID:', datos?.IdTransaccion);
                 break;
 
             case 'TransaccionDeclinada':
@@ -175,7 +169,8 @@ app.get('/api/wompi/estado/:referencia', (req, res) => {
         referencia,
         estado: transaccion.estado,
         montoCents: transaccion.montoCents,
-        fecha: transaccion.fecha
+        fecha: transaccion.fecha,
+        idTransaccion: transaccion.idTransaccion
     });
 });
 
@@ -184,11 +179,13 @@ app.get('/api/health', (req, res) => {
     res.json({ 
         ok: true, 
         message: 'Servidor de pagos funcionando',
-        transaccionesActivas: transacciones.size
+        transaccionesActivas: transacciones.size,
+        timestamp: new Date().toISOString()
     });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor de pagos corriendo en puerto ${PORT}`);
+    console.log(`🔧 Entorno: ${process.env.NODE_ENV || 'development'}`);
 });
