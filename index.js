@@ -9,8 +9,9 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// ✅ CORREGIDO: Límite actualizado según el error de Wompi
+// ✅ CONFIGURADO PARA USD: Límites en dólares
 const MONTO_MAXIMO = 100000; // $1000 USD en centavos (1000 * 100)
+const MONTO_MINIMO = 100;    // $1 USD en centavos
 
 // Almacenamiento en memoria
 const transacciones = new Map();
@@ -22,7 +23,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
         console.log('🚗 Generando enlace de pago:', { referencia, montoCents });
 
-        // ✅ CORREGIDO: Validar monto máximo según límite de Wompi
+        // ✅ VALIDACIONES PARA USD
         if (montoCents > MONTO_MAXIMO) {
             return res.status(400).json({
                 ok: false,
@@ -30,11 +31,10 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             });
         }
 
-        // ✅ CORREGIDO: Validar monto mínimo
-        if (montoCents < 100) { // Mínimo $1 USD
+        if (montoCents < MONTO_MINIMO) {
             return res.status(400).json({
                 ok: false,
-                error: `Monto mínimo permitido es $1.00 USD`
+                error: `Monto mínimo permitido es $${MONTO_MINIMO / 100} USD`
             });
         }
 
@@ -54,12 +54,12 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
         const token = tokenResp.data.access_token;
 
-        // ✅ CORREGIDO: Crear payload para Wompi con moneda COP
+        // ✅ CONFIGURADO PARA USD: Moneda USD en el payload
         const payload = {
             identificadorEnlaceComercio: referencia,
             monto: montoCents,
             nombreProducto: descripcion || "Renta de Vehículo",
-            moneda: "COP", // ✅ Especificar moneda COP
+            moneda: "USD", // ✅ CAMBIADO A USD
             configuracion: {
                 duracionInterfazIntentoMinutos: 30,
                 urlWebhook: `${process.env.BACKEND_URL || 'https://rideandbuypay.onrender.com'}/webhook/wompi`,
@@ -91,7 +91,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             estado: 'pendiente',
             fecha: new Date(),
             idEnlace: wompiResp.data.idEnlace,
-            moneda: "COP"
+            moneda: "USD" // ✅ CAMBIADO A USD
         });
 
         console.log('✅ Enlace generado para:', referencia);
@@ -106,7 +106,6 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     } catch (err) {
         console.error('❌ Error generando enlace:', err.response?.data || err.message);
         
-        // ✅ CORREGIDO: Mejor manejo de errores
         let errorMessage = 'Error al generar enlace de pago';
         if (err.response?.data) {
             errorMessage = err.response.data.mensajes?.[0] || JSON.stringify(err.response.data);
@@ -121,8 +120,6 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         });
     }
 });
-
-// Los demás endpoints (webhook, estado, health check) se mantienen igual...
 
 // 2. Webhook que Wompi llama automáticamente
 app.post('/webhook/wompi', async (req, res) => {
@@ -197,7 +194,8 @@ app.get('/api/wompi/estado/:referencia', (req, res) => {
         estado: transaccion.estado,
         montoCents: transaccion.montoCents,
         fecha: transaccion.fecha,
-        idTransaccion: transaccion.idTransaccion
+        idTransaccion: transaccion.idTransaccion,
+        moneda: transaccion.moneda // ✅ Incluir moneda en la respuesta
     });
 });
 
@@ -207,6 +205,7 @@ app.get('/api/health', (req, res) => {
         ok: true, 
         message: 'Servidor de pagos funcionando',
         transaccionesActivas: transacciones.size,
+        moneda: 'USD', // ✅ Especificar moneda
         timestamp: new Date().toISOString()
     });
 });
@@ -215,5 +214,7 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor de pagos corriendo en puerto ${PORT}`);
     console.log(`🔧 Entorno: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`💰 Moneda: USD`);
     console.log(`💰 Límite máximo por transacción: $${MONTO_MAXIMO / 100} USD`);
+    console.log(`💰 Límite mínimo por transacción: $${MONTO_MINIMO / 100} USD`);
 });
