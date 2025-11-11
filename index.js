@@ -41,6 +41,7 @@ app.get('/api/debug/wompi-config', (req, res) => {
 });
 
 // 1. Generar enlace de pago - CON MONEDA EXPLÍCITA
+// 1. Generar enlace de pago - CON MONTO EN DÓLARES
 app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     try {
         const { referencia, montoCents, descripcion, clienteId } = req.body;
@@ -55,15 +56,18 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             });
         }
 
-        // Validar monto
-        if (montoCents > MONTO_MAXIMO) {
+        // Convertir centavos a dólares para Wompi SV
+        const montoDolares = montoCents;
+        
+        // Validar monto en dólares
+        if (montoDolares > (MONTO_MAXIMO / 100)) {
             return res.status(400).json({
                 ok: false,
                 error: `Monto máximo permitido es $${MONTO_MAXIMO / 100} USD`
             });
         }
 
-        if (montoCents < MONTO_MINIMO) {
+        if (montoDolares < (MONTO_MINIMO / 100)) {
             return res.status(400).json({
                 ok: false,
                 error: `Monto mínimo permitido es $${MONTO_MINIMO / 100} USD`
@@ -97,12 +101,12 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         const token = tokenResp.data.access_token;
         console.log('✅ Token obtenido correctamente');
 
-        // ✅ ESTRUCTURA CON MONEDA USD EXPLÍCITA
+        // ✅ ESTRUCTURA CON MONTO EN DÓLARES
         const payload = {
             identificadorEnlaceComercio: referencia,
-            monto: montoCents, // En centavos
+            monto: montoDolares, // ✅ CAMBIADO: Ahora en dólares
             nombreProducto: descripcion || "Renta de Vehículo",
-            moneda: "USD", // ✅ AGREGADO: Moneda explícita
+            moneda: "USD",
             formaPago: {
                 permitirTarjetaCreditoDebido: true,
                 permitirPagoConPuntoAgricola: false,
@@ -139,11 +143,11 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         console.log('📤 Enviando a Wompi El Salvador:', {
             url: apiUrl,
             referencia: referencia,
-            monto: `$${(montoCents / 100).toFixed(2)} USD`,
+            montoEnDolares: `$${montoDolares.toFixed(2)} USD`,
             montoEnCentavos: montoCents
         });
 
-        console.log('🔧 Payload con moneda USD:', JSON.stringify(payload, null, 2));
+        console.log('🔧 Payload con monto en dólares:', JSON.stringify(payload, null, 2));
 
         // Crear enlace en Wompi SV
         const wompiResp = await axios.post(
@@ -190,7 +194,6 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         let errorMessage = 'Error al generar enlace de pago';
         let detalles = err.response?.data;
 
-        // ✅ MEJOR MANEJO DE ERRORES ESPECÍFICOS
         if (err.response?.data?.mensajes) {
             errorMessage = err.response.data.mensajes.join(', ');
         }
