@@ -16,8 +16,8 @@ const WEBHOOK_URL = 'https://rideandbuypay.onrender.com/webhook/wompi';
 const REDIRECT_BASE_URL = 'https://rideandbuypay.onrender.com';
 
 // Límites en dólares
-const MONTO_MAXIMO = 100000;
-const MONTO_MINIMO = 100;
+const MONTO_MAXIMO = 100000;  // Máximo permitido en centavos (1000 USD)
+const MONTO_MINIMO = 100;     // Mínimo permitido en centavos (1 USD)
 
 const transacciones = new Map();
 
@@ -194,7 +194,6 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     }
 });
 
-// Los demás endpoints se mantienen igual...
 // 2. ENDPOINT PARA REDIRIGIR 
 app.get('/api/wompi/redirect-to-app', (req, res) => {
     const { referencia } = req.query;
