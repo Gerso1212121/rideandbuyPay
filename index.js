@@ -9,11 +9,11 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// ✅ USA TUS URLs REALES
-const WOMPI_API_URL = process.env.WOMPI_API || 'https://api.wompi.sv/v1/';
-const WOMPI_AUTH_URL = process.env.WOMPI_AUTH || 'https://id.wompi.sv/';
-const WEBHOOK_URL = 'https://rideandbuypay.onrender.com/webhook/wompi'; // ✅ TU WEBHOOK REAL
-const REDIRECT_BASE_URL = 'https://rideandbuypay.onrender.com'; // ✅ TU BACKEND REAL
+// ✅ PRUEBA CON WOMPI INTERNACIONAL
+const WOMPI_API_URL = process.env.WOMPI_API || 'https://api.wompi.dev/v1/';
+const WOMPI_AUTH_URL = process.env.WOMPI_AUTH || 'https://id.wompi.dev/';
+const WEBHOOK_URL = 'https://rideandbuypay.onrender.com/webhook/wompi';
+const REDIRECT_BASE_URL = 'https://rideandbuypay.onrender.com';
 
 // Límites en dólares
 const MONTO_MAXIMO = 100000;
@@ -21,7 +21,7 @@ const MONTO_MINIMO = 100;
 
 const transacciones = new Map();
 
-// Endpoint de debug
+// Endpoint de debug ACTUALIZADO
 app.get('/api/debug/wompi-config', (req, res) => {
     const clientId = process.env.WOMPI_CLIENT_ID;
     const clientSecret = process.env.WOMPI_CLIENT_SECRET;
@@ -35,11 +35,12 @@ app.get('/api/debug/wompi-config', (req, res) => {
         REDIRECT_BASE_URL: REDIRECT_BASE_URL,
         MONTO_MAXIMO: `${MONTO_MAXIMO / 100} USD`,
         MONTO_MINIMO: `${MONTO_MINIMO / 100} USD`,
-        configuracionCorrecta: !!(clientId && clientSecret)
+        configuracionCorrecta: !!(clientId && clientSecret),
+        entorno: 'WOMPI INTERNACIONAL' // ← Nuevo
     });
 });
 
-// 1. Generar enlace de pago - CON TUS URLs REALES
+// 1. Generar enlace de pago - WOMPI INTERNACIONAL
 app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     try {
         const { referencia, montoCents, descripcion, clienteId } = req.body;
@@ -72,7 +73,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
 
         console.log('🔑 Obteniendo token de Wompi...');
         
-        // Obtener token de Wompi
+        // Obtener token de Wompi INTERNACIONAL
         const tokenResp = await axios.post(
             WOMPI_AUTH_URL + 'connect/token',
             new URLSearchParams({
@@ -97,37 +98,34 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         const token = tokenResp.data.access_token;
         console.log('✅ Token obtenido correctamente');
 
-        // ✅ REDIRECT_URL que apunta a tu endpoint de redirección
+        // ✅ REDIRECT_URL 
         const redirectUrl = `${REDIRECT_BASE_URL}/api/wompi/redirect-to-app?referencia=${referencia}`;
         
-        // ✅ PAYLOAD para Wompi SV
+        // ✅ PAYLOAD para Wompi INTERNACIONAL
         const payload = {
-            data: {
-                attributes: {
-                    name: descripcion || "Renta de Vehículo",
-                    description: `Renta - ${clienteId || 'Cliente'}`,
-                    single_use: true,
-                    collect_shipping: false,
-                    currency: "USD",
-                    amount_in_cents: montoCents,
-                    redirect_url: redirectUrl, // ✅ Tu URL de redirección
-                    reference: referencia,
-                }
-            }
+            name: descripcion || "Renta de Vehículo",
+            description: `Renta - ${clienteId || 'Cliente'}`,
+            single_use: true,
+            collect_shipping: false,
+            currency: "USD",
+            amount_in_cents: montoCents,
+            redirect_url: redirectUrl,
+            reference: referencia,
         };
 
-        // ✅ URL CORREGIDA
+        // ✅ URL para Wompi Internacional
         const apiUrl = WOMPI_API_URL.endsWith('/v1/') 
             ? WOMPI_API_URL + 'payment_links'
             : WOMPI_API_URL.replace(/\/$/, '') + '/v1/payment_links';
 
-        console.log('📤 Enviando a Wompi SV:', {
+        console.log('🌐 ENTORNO WOMPI INTERNACIONAL');
+        console.log('📤 Enviando a Wompi:', {
             url: apiUrl,
             referencia: referencia,
             monto: `$${(montoCents / 100).toFixed(2)} USD`
         });
 
-        // Crear enlace en Wompi
+        // Crear enlace en Wompi INTERNACIONAL
         const wompiResp = await axios.post(
             apiUrl,
             payload, 
@@ -141,7 +139,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             }
         );
 
-        console.log('✅ Respuesta de Wompi SV recibida');
+        console.log('✅ Respuesta de Wompi recibida:', wompiResp.data);
 
         if (!wompiResp.data.data) {
             throw new Error('Respuesta inválida de Wompi');
@@ -156,12 +154,12 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             fecha: new Date(),
             idEnlace: wompiResp.data.data.id,
             moneda: "USD",
-            urlEnlace: wompiResp.data.data.attributes.checkout_url
+            urlEnlace: wompiResp.data.data.attributes?.checkout_url || wompiResp.data.data.url
         });
 
         res.json({
             ok: true,
-            urlEnlace: wompiResp.data.data.attributes.checkout_url,
+            urlEnlace: wompiResp.data.data.attributes?.checkout_url || wompiResp.data.data.url,
             idEnlace: wompiResp.data.data.id,
             referencia: referencia,
         });
@@ -183,9 +181,9 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
                           'Error en la respuesta de Wompi';
             detalles = err.response.data;
         } else if (err.code === 'ECONNREFUSED') {
-            errorMessage = 'No se puede conectar con el servicio de pagos';
+            errorMessage = 'No se puede conectar con Wompi';
         } else if (err.response?.status === 404) {
-            errorMessage = 'Endpoint no encontrado. Verifica la URL de Wompi API';
+            errorMessage = 'Endpoint no encontrado. Probablemente credenciales/entorno incorrectos';
         }
 
         res.status(500).json({ 
@@ -196,43 +194,62 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     }
 });
 
-// 2. ✅ ENDPOINT PARA REDIRIGIR A LA APP MÓVIL
+// Los demás endpoints se mantienen igual...
+// 2. ENDPOINT PARA REDIRIGIR 
 app.get('/api/wompi/redirect-to-app', (req, res) => {
     const { referencia } = req.query;
     
     console.log('🔀 Redirigiendo a app móvil para referencia:', referencia);
     
-    // Para app móvil, redirigimos a un Deep Link
-    const deepLink = `tuapp://renta/resultado?referencia=${referencia}`;
+    const deepLink = `tuapp://payment/result?referencia=${referencia}`;
     
     res.send(`
         <!DOCTYPE html>
         <html>
         <head>
             <title>Pago completado</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
             <script>
-                // Intentar abrir la app
-                window.location.href = '${deepLink}';
-                
-                // Si no funciona después de 2 segundos, mostrar mensaje
                 setTimeout(function() {
-                    document.getElementById('message').innerHTML = 
-                        '<p>Si no se abre automáticamente, <a href="${deepLink}">haz clic aquí</a></p>';
-                }, 2000);
+                    window.location.href = '${deepLink}';
+                }, 100);
+                
+                setTimeout(function() {
+                    document.getElementById('status').innerHTML = 
+                        '<h3>✅ Pago procesado</h3>' +
+                        '<p>Redirigiendo a la aplicación...</p>';
+                }, 500);
             </script>
+            <style>
+                body { 
+                    font-family: Arial, sans-serif; 
+                    text-align: center; 
+                    padding: 50px 20px;
+                    background: #f5f5f5;
+                }
+                .container {
+                    background: white;
+                    padding: 30px;
+                    border-radius: 10px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    margin: 0 auto;
+                    max-width: 400px;
+                }
+            </style>
         </head>
         <body>
-            <div style="text-align: center; margin-top: 50px;">
-                <h2>¡Pago procesado!</h2>
-                <p>Redirigiendo a la aplicación...</p>
-                <div id="message"></div>
+            <div class="container">
+                <div id="status">
+                    <h2>🔄 Procesando...</h2>
+                    <p>Por favor espera</p>
+                </div>
             </div>
         </body>
         </html>
     `);
 });
 
-// 3. ✅ WEBHOOK - ESTE ES EL QUE YA TIENES CONFIGURADO
+// 3. WEBHOOK (se mantiene igual)
 app.post('/webhook/wompi', async (req, res) => {
     console.log('📥 Webhook recibido de Wompi:', JSON.stringify(req.body, null, 2));
     
@@ -324,7 +341,7 @@ app.get('/api/health', (req, res) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor de pagos corriendo en puerto ${PORT}`);
-    console.log(`🔧 Entorno: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔧 Entorno: WOMPI INTERNACIONAL`); // ← Cambiado
     console.log(`💰 Moneda: USD`);
     console.log(`🔗 Webhook: ${WEBHOOK_URL}`);
     console.log(`🔀 Redirect: ${REDIRECT_BASE_URL}/api/wompi/redirect-to-app`);
