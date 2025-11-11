@@ -40,7 +40,7 @@ app.get('/api/debug/wompi-config', (req, res) => {
     });
 });
 
-// 1. Generar enlace de pago - ESTRUCTURA CORREGIDA
+// 1. Generar enlace de pago - CON MONEDA EXPLÍCITA
 app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     try {
         const { referencia, montoCents, descripcion, clienteId } = req.body;
@@ -97,22 +97,22 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         const token = tokenResp.data.access_token;
         console.log('✅ Token obtenido correctamente');
 
-        // ✅ ESTRUCTURA CORREGIDA SEGÚN LOS ERRORES
+        // ✅ ESTRUCTURA CON MONEDA USD EXPLÍCITA
         const payload = {
             identificadorEnlaceComercio: referencia,
             monto: montoCents, // En centavos
             nombreProducto: descripcion || "Renta de Vehículo",
+            moneda: "USD", // ✅ AGREGADO: Moneda explícita
             formaPago: {
                 permitirTarjetaCreditoDebido: true,
                 permitirPagoConPuntoAgricola: false,
-                permitirPagoEnCuotasAgricola: false, // ❌ Si es false, NO enviar cantidadMaximaCuotas
+                permitirPagoEnCuotasAgricola: false,
                 permitirPagoEnBitcoin: false,
                 permitePagoQuickPay: false
             },
-            // ❌ ELIMINADO: cantidadMaximaCuotas (solo se usa si permitirPagoEnCuotasAgricola es true)
             infoProducto: {
                 descripcionProducto: `Renta para cliente: ${clienteId || 'N/A'}`,
-                urlImagenProducto: null // ✅ CORREGIDO: usar null en lugar de string vacío
+                urlImagenProducto: null
             },
             configuracion: {
                 urlRedirect: `${REDIRECT_BASE_URL}/api/wompi/redirect-to-app?referencia=${referencia}`,
@@ -125,7 +125,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
             },
             vigencia: {
                 fechaInicio: new Date().toISOString(),
-                fechaFin: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 horas
+                fechaFin: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
             },
             limitesDeUso: {
                 cantidadMaximaPagosExitosos: 1,
@@ -139,10 +139,11 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         console.log('📤 Enviando a Wompi El Salvador:', {
             url: apiUrl,
             referencia: referencia,
-            monto: `$${(montoCents / 100).toFixed(2)} USD`
+            monto: `$${(montoCents / 100).toFixed(2)} USD`,
+            montoEnCentavos: montoCents
         });
 
-        console.log('🔧 Payload corregido:', JSON.stringify(payload, null, 2));
+        console.log('🔧 Payload con moneda USD:', JSON.stringify(payload, null, 2));
 
         // Crear enlace en Wompi SV
         const wompiResp = await axios.post(
@@ -189,6 +190,11 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
         let errorMessage = 'Error al generar enlace de pago';
         let detalles = err.response?.data;
 
+        // ✅ MEJOR MANEJO DE ERRORES ESPECÍFICOS
+        if (err.response?.data?.mensajes) {
+            errorMessage = err.response.data.mensajes.join(', ');
+        }
+
         res.status(500).json({ 
             ok: false, 
             error: errorMessage,
@@ -197,6 +203,7 @@ app.post('/api/wompi/generar-enlace-renta', async (req, res) => {
     }
 });
 
+// Los demás endpoints se mantienen igual...
 // 2. ENDPOINT PARA REDIRIGIR 
 app.get('/api/wompi/redirect-to-app', (req, res) => {
     const { referencia } = req.query;
