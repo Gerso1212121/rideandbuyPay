@@ -336,77 +336,100 @@ app.get('/api/wompi/redirect-to-app', (req, res) => {
 });
 
 // 3. ✅ WEBHOOK MEJORADO
+// ✅ WEBHOOK CORREGIDO - Manejar correctamente el formato de Wompi El Salvador
 app.post('/webhook/wompi', async (req, res) => {
     console.log('📥 Webhook recibido:', JSON.stringify(req.body, null, 2));
     
-    const event = req.body?.event || req.body?.Evento;
-    const data = req.body?.data || req.body?.Datos;
-    const reference = data?.reference || data?.IdentificadorEnlaceComercio;
-
-    if (!reference) {
-        return res.status(400).json({ error: 'Referencia faltante' });
-    }
-
     try {
-        const transaccion = transacciones.get(reference);
+        // ✅ FORMATO WOMPI EL SALVADOR - CORREGIDO
+        const resultadoTransaccion = req.body.ResultadoTransaccion;
+        const referencia = req.body.EnlacePago?.IdentificadorEnlaceComercio;
+        
+        if (!referencia) {
+            console.error('❌ Referencia faltante en webhook');
+            return res.status(400).json({ error: 'Referencia faltante' });
+        }
+
+        console.log(`🔍 Procesando webhook - Referencia: ${referencia}, Resultado: ${resultadoTransaccion}`);
+
+        const transaccion = transacciones.get(referencia);
         
         if (!transaccion) {
-            console.warn('⚠️ Transacción no encontrada en webhook:', reference);
+            console.warn('⚠️ Transacción no encontrada en webhook:', referencia);
             return res.status(404).json({ error: 'Transacción no encontrada' });
         }
 
         let estadoAnterior = transaccion.estado;
 
-        switch (event) {
-            case 'transaction.approved':
-            case 'TransaccionAprobada':
+        // ✅ MANEJAR ESTADOS SEGÚN WOMPI EL SALVADOR
+        switch (resultadoTransaccion) {
+            case 'ExitosaAprobada':
                 transaccion.estado = 'aprobado';
                 transaccion.fechaAprobacion = new Date();
-                transaccion.idTransaccion = data?.id || data?.IdTransaccion;
-                console.log('✅ Pago APROBADO via Webhook:', reference);
+                transaccion.idTransaccion = req.body.IdTransaccion;
+                console.log('✅ Pago APROBADO via Webhook:', referencia);
+                
+                // ✅ ACTUALIZAR INMEDIATAMENTE EN EL MAPA
+                transacciones.set(referencia, transaccion);
+                console.log('🔄 Estado actualizado en memoria:', transaccion.estado);
                 break;
 
-            case 'transaction.declined':
-            case 'TransaccionDeclinada':
+            case 'ExitosaDeclinada':
                 transaccion.estado = 'rechazado';
-                transaccion.razon = data?.reason || data?.Razon;
-                console.log('❌ Pago RECHAZADO via Webhook:', reference);
+                transaccion.razon = 'Transacción declinada';
+                console.log('❌ Pago RECHAZADO via Webhook:', referencia);
+                transacciones.set(referencia, transaccion);
                 break;
 
-            case 'transaction.failed':
-            case 'TransaccionFallida':
+            case 'Fallida':
                 transaccion.estado = 'fallido';
-                transaccion.error = data?.error || data?.Error;
-                console.log('💥 Pago FALLIDO via Webhook:', reference);
+                transaccion.error = 'Transacción fallida';
+                console.log('💥 Pago FALLIDO via Webhook:', referencia);
+                transacciones.set(referencia, transaccion);
                 break;
 
             default:
-                console.log('ℹ️ Evento no manejado:', event);
+                console.log('ℹ️ Estado no manejado:', resultadoTransaccion);
         }
 
-        // ✅ NOTIFICAR CAMBIO DE ESTADO
+        // ✅ LOG DE CAMBIO DE ESTADO
         if (estadoAnterior !== transaccion.estado) {
             console.log(`🔄 Estado actualizado: ${estadoAnterior} → ${transaccion.estado}`);
         }
 
-        transacciones.set(reference, transaccion);
-        res.json({ ok: true, mensaje: 'Webhook procesado' });
+        res.json({ 
+            ok: true, 
+            mensaje: 'Webhook procesado',
+            referencia: referencia,
+            estado: transaccion.estado 
+        });
 
     } catch (error) {
         console.error('❌ Error en webhook:', error);
-        res.status(500).json({ error: 'Error interno' });
+        res.status(500).json({ error: 'Error interno del servidor' });
     }
 });
 
 // 4. ✅ ENDPOINTS ADICIONALES (se mantienen igual)
+// ✅ ENDPOINT DE ESTADO MEJORADO
 app.get('/api/wompi/estado/:referencia', (req, res) => {
     const { referencia } = req.params;
+    
+    console.log(`🔍 Consultando estado para: ${referencia}`);
+    
     const transaccion = transacciones.get(referencia);
 
     if (!transaccion) {
-        return res.status(404).json({ ok: false, error: 'Transacción no encontrada' });
+        console.warn('⚠️ Transacción no encontrada:', referencia);
+        return res.status(404).json({ 
+            ok: false, 
+            error: 'Transacción no encontrada',
+            referencia: referencia 
+        });
     }
 
+    console.log(`📊 Estado encontrado: ${referencia} -> ${transaccion.estado}`);
+    
     res.json({
         ok: true,
         referencia,
@@ -418,7 +441,6 @@ app.get('/api/wompi/estado/:referencia', (req, res) => {
         desdeApp: transaccion.desdeApp
     });
 });
-
 app.get('/api/health', (req, res) => {
     res.json({ 
         ok: true, 
